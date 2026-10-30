@@ -1,0 +1,33 @@
+{
+  "name": "kv_lib",
+  "version": "0.1.0",
+  "description": "generic key-value store with vector search",
+  "keywords": [
+    "kv",
+    "vector",
+    "embedding",
+    "search",
+    "sqlite",
+    "sys"
+  ],
+  "author": "funxdata",
+  "type": "sys",
+  "license": "MIT",
+  "dependencies-sys": {
+    "database": "1.0.2"
+  },
+  "dependencies-model": {
+    "qwen3-embed": "1.0.0"
+  },
+  "platform-exports": {
+    "windows": {
+      "./target/release/kv_lib.dll": "kv_lib.dll"
+    },
+    "linux": {
+      "./target/release/libkv_lib.so": "kv_lib.so"
+    },
+    "macos": {
+      "./target/release/libkv_lib.dylib": "kv_lib.dylib"
+    }
+  }
+}
