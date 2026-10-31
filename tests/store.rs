@@ -249,3 +249,59 @@ fn readonly_collection_rejects_writes() {
     let err = put_records(&store, "demo", &[item("a", "alpha", "alpha")]).expect_err("readonly");
     assert_eq!(err.code, 400605);
 }
+
+#[test]
+fn rank_persists_and_orders_list_and_search() {
+    let store = store();
+    create_collection(&store, "ranked", 0);
+    put_records(
+        &store,
+        "ranked",
+        &[
+            PutItem {
+                key: "a".into(),
+                value: Some("a".into()),
+                text: Some("导出 PDF 文档".into()),
+                rank: Some(2),
+                ..Default::default()
+            },
+            PutItem {
+                key: "b".into(),
+                value: Some("b".into()),
+                text: Some("导出 PDF 文档图片".into()),
+                rank: Some(1),
+                ..Default::default()
+            },
+            item("c", "c", "导出 PDF"),
+        ],
+    )
+    .expect("put ranked");
+
+    let got = get_records(
+        &store,
+        "ranked",
+        &["a".to_string(), "b".to_string(), "c".to_string()],
+        false,
+    )
+    .expect("get ranked");
+    let ranks: Vec<i64> = got
+        .list
+        .iter()
+        .map(|record| record["rank"].as_i64().expect("rank"))
+        .collect();
+    assert_eq!(ranks, vec![2, 1, 0]);
+
+    let listed = list_records(&store, "ranked", None, 1, 10, false, false).expect("list ranked");
+    let listed_keys: Vec<&str> = listed
+        .list
+        .iter()
+        .map(|record| record["key"].as_str().expect("key"))
+        .collect();
+    assert_eq!(listed_keys, vec!["b", "a", "c"]);
+
+    let query = store.embedder().embed("导出 PDF").expect("embed query");
+    let hits = search(&store, "ranked", query, 3, -1.0, None).expect("search ranked");
+    let hit_keys: Vec<&str> = hits.iter().map(|hit| hit.key.as_str()).collect();
+    assert_eq!(hit_keys, vec!["b", "a", "c"]);
+    assert_eq!(hits[0].rank, 1);
+}

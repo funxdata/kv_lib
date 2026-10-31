@@ -20,6 +20,8 @@ pub struct PutItem {
     pub text: Option<String>,
     pub text_hash: Option<String>,
     pub meta: Option<Value>,
+    /// 业务排名：数值越小越靠前，`0` 表示未排名。
+    pub rank: Option<i64>,
     pub vector: Option<Vec<f32>>,
     pub dim: Option<i64>,
     pub force: bool,
@@ -58,6 +60,7 @@ pub struct Record {
     pub text: String,
     pub text_hash: String,
     pub meta: Value,
+    pub rank: i64,
     pub dim: i64,
     pub vector: Option<Vec<f32>>,
     pub version: i64,
@@ -75,6 +78,7 @@ impl Record {
             object.insert("meta".into(), self.meta.clone());
         }
         object.insert("version".into(), json!(self.version));
+        object.insert("rank".into(), json!(self.rank));
         object.insert("dim".into(), json!(self.dim));
         object.insert("has_vector".into(), json!(self.vector.is_some()));
         object.insert("text_hash".into(), json!(self.text_hash));
@@ -131,6 +135,11 @@ pub fn validate_value_type(value_type: &str) -> Result<()> {
     Ok(())
 }
 
+/// rank 排序键：正数按升序，`0` / 负数视为未排名，排在最后。
+pub(crate) fn rank_order(rank: i64) -> (u8, i64) {
+    if rank > 0 { (0, rank) } else { (1, 0) }
+}
+
 fn record_from_row(row: &Value) -> Result<Record> {
     let vector_hex = as_optional_string(row, "vector_hex");
     let vector = match vector_hex {
@@ -150,6 +159,7 @@ fn record_from_row(row: &Value) -> Result<Record> {
         text: as_string(row, "text"),
         text_hash: as_string(row, "text_hash"),
         meta,
+        rank: as_i64(row, "rank"),
         dim: as_i64(row, "dim"),
         vector,
         version: as_i64(row, "version"),
@@ -160,7 +170,7 @@ fn record_from_row(row: &Value) -> Result<Record> {
 }
 
 fn select_columns() -> &'static str {
-    "key, value, value_type, text, text_hash, meta, dim,
+    "key, value, value_type, text, text_hash, meta, rank, dim,
      CASE WHEN vector IS NULL THEN NULL ELSE hex(vector) END AS vector_hex,
      version, created_at, updated_at"
 }
@@ -349,6 +359,10 @@ fn put_one(
             "meta exceeds {MAX_META_BYTES} bytes"
         )));
     }
+    let rank = item
+        .rank
+        .or_else(|| old.as_ref().map(|record| record.rank))
+        .unwrap_or(0);
 
     let mut text = old
         .as_ref()
@@ -435,6 +449,7 @@ fn put_one(
                 || record.value_type != value_type
                 || record.text != text
                 || record.meta != meta
+                || record.rank != rank
                 || item.vector.is_some()
         }
         None => true,
@@ -450,14 +465,15 @@ fn put_one(
     };
     let sql = format!(
         "INSERT INTO kv_record
-            (key, value, value_type, text, text_hash, meta, dim, vector, version)
-         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {})
+            (key, value, value_type, text, text_hash, meta, rank, dim, vector, version)
+         VALUES ({}, {}, {}, {}, {}, {}, {}, {}, {}, {})
          ON CONFLICT(key) DO UPDATE SET
             value = excluded.value,
             value_type = excluded.value_type,
             text = excluded.text,
             text_hash = excluded.text_hash,
             meta = excluded.meta,
+            rank = excluded.rank,
             dim = excluded.dim,
             vector = excluded.vector,
             version = excluded.version,
@@ -468,6 +484,7 @@ fn put_one(
         quote(&text),
         quote(&text_hash),
         quote(&meta_text),
+        rank,
         dim,
         vector_sql,
         version
@@ -589,7 +606,9 @@ pub fn list_records(
         let result = store.query(
             &shard.path,
             &format!(
-                "SELECT {} FROM kv_record {filter} ORDER BY key LIMIT {page_size} OFFSET {offset}",
+                "SELECT {} FROM kv_record {filter}
+                 ORDER BY CASE WHEN rank <= 0 THEN 1 ELSE 0 END, rank, key
+                 LIMIT {page_size} OFFSET {offset}",
                 select_columns()
             ),
         )?;
@@ -598,7 +617,11 @@ pub fn list_records(
             rows.push(record);
         }
     }
-    rows.sort_by(|a, b| a.key.cmp(&b.key));
+    rows.sort_by(|a, b| {
+        rank_order(a.rank)
+            .cmp(&rank_order(b.rank))
+            .then_with(|| a.key.cmp(&b.key))
+    });
     rows.truncate(page_size);
 
     Ok(ListResult {

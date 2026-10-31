@@ -10,6 +10,7 @@ pub use collection::{
     list_collections, put_collection,
 };
 pub use embed::{EmbedResult, embed_records};
+pub(crate) use record::rank_order;
 pub use record::{
     DeleteResult, GetResult, ListResult, PutItem, PutResult, Record, delete_records, get_records,
     list_records, put_records,
@@ -65,6 +66,7 @@ impl Store {
         }
 
         schema::create_schema(self)?;
+        schema::migrate_schema(self)?;
 
         {
             let mut ready = self

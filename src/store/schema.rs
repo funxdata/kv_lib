@@ -57,6 +57,7 @@ pub fn records_table_sql() -> &'static str {
         text       TEXT NOT NULL DEFAULT '',
         text_hash  TEXT NOT NULL DEFAULT '',
         meta       TEXT NOT NULL DEFAULT '{}',
+        rank       INTEGER NOT NULL DEFAULT 0,
         dim        INTEGER NOT NULL DEFAULT 0,
         vector     BLOB,
         version    INTEGER NOT NULL DEFAULT 1,
@@ -64,4 +65,26 @@ pub fn records_table_sql() -> &'static str {
         updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE(key)
     )"
+}
+
+/// 为已有分片补齐 `rank` 列（`CREATE TABLE IF NOT EXISTS` 不会修改旧表）。
+pub fn migrate_schema(store: &Store) -> Result<()> {
+    let rows = store.query(META_DB, "SELECT path FROM kv_shard")?;
+    for row in rows {
+        let path = crate::db::as_string(&row, "path");
+        if path.is_empty() {
+            continue;
+        }
+        let columns = store.query(&path, "PRAGMA table_info(kv_record)")?;
+        let has_rank = columns
+            .iter()
+            .any(|column| crate::db::as_string(column, "name") == "rank");
+        if !has_rank {
+            store.execute(
+                &path,
+                "ALTER TABLE kv_record ADD COLUMN rank INTEGER NOT NULL DEFAULT 0",
+            )?;
+        }
+    }
+    Ok(())
 }

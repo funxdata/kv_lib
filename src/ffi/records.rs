@@ -31,6 +31,8 @@ struct PutItemReq {
     #[serde(default)]
     meta: Option<Value>,
     #[serde(default)]
+    rank: Option<i64>,
+    #[serde(default)]
     vector: Option<Value>,
     #[serde(default)]
     dim: Option<i64>,
@@ -102,6 +104,7 @@ pub extern "C" fn post_kv_put(json_in: *const c_char, json_out: *mut c_char) -> 
                 text: item.text,
                 text_hash: item.text_hash,
                 meta: item.meta,
+                rank: item.rank,
                 vector,
                 dim: item.dim,
                 force: item.force,

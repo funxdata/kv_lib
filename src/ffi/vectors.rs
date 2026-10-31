@@ -114,7 +114,7 @@ pub extern "C" fn post_kv_search(json_in: *const c_char, json_out: *mut c_char) 
         let list: Vec<Value> = hits
             .into_iter()
             .map(|hit| {
-                let mut object = json!({ "key": hit.key, "score": hit.score });
+                let mut object = json!({ "key": hit.key, "score": hit.score, "rank": hit.rank });
                 if let Some(values) = &values {
                     if let Some(item) = values.get(&hit.key) {
                         if let (Some(object), Some(item)) =

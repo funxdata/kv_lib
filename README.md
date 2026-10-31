@@ -15,7 +15,9 @@ Compiled as a Rust `cdylib` and exposed as `POST /kv_lib` + `FFI-Symbol: kv_*`.
 ## Features
 
 - Collections with per-collection `dim`, `model`, shard size and index threshold;
-- Records keyed by `collection + key`, with `value`, `value_type`, `text`, `meta`, `version`;
+- Records keyed by `collection + key`, with `value`, `value_type`, `text`, `meta`, `rank`, `version`;
+- `rank` is a business ordering field: lower values come first in `kv_list` / `kv_search`,
+  and `0` means unranked (sorted last);
 - `text_hash` / SHA-256 idempotency: unchanged text is skipped, changed text is re-embedded;
 - Sharded storage: a collection rolls to a new shard when the active file exceeds `shard_max_mb`;
 - Vector search: qwen3-embed (1024-dim, L2-normalized) + `turbovec` index cached per collection

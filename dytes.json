@@ -1,5 +1,6 @@
 {
   "name": "kv_lib",
+  "uuid": "d7921984-9020-4006-a356-a0c74578e4ac",
   "version": "0.1.0",
   "description": "generic key-value store with vector search",
   "keywords": [

@@ -1,6 +1,6 @@
 use crate::db::{as_i64, as_optional_string, as_string, in_list};
 use crate::error::{KvError, Result};
-use crate::store::{Collection, Store, get_collection, list_shards};
+use crate::store::{Collection, Store, get_collection, list_shards, rank_order};
 use crate::utils::hex;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
@@ -15,11 +15,13 @@ const TURBO_BIT_WIDTH: usize = 4;
 pub struct SearchHit {
     pub key: String,
     pub score: f32,
+    pub rank: i64,
 }
 
 struct Cached {
     generation: i64,
     keys: Vec<String>,
+    ranks: Vec<i64>,
     index: Option<turbovec::IdMapIndex>,
 }
 
@@ -79,7 +81,7 @@ impl IndexCache {
             }
         }
 
-        let (keys, vectors) = load_all(store, collection)?;
+        let (keys, ranks, vectors) = load_all(store, collection)?;
         let dim = collection.dim as usize;
         if vectors.len() % dim != 0 {
             return Err(KvError::index("vector buffer is not aligned to dim"));
@@ -102,6 +104,7 @@ impl IndexCache {
         let cached = Cached {
             generation: collection.generation,
             keys,
+            ranks,
             index,
         };
         let mut entries = self
@@ -185,27 +188,29 @@ fn cached_search(
         return Vec::new();
     };
     let (scores, ids) = index.search(query, top_k.saturating_mul(2).max(top_k));
-    let mut best: HashMap<&str, f32> = HashMap::new();
+    let mut best: HashMap<&str, (f32, i64)> = HashMap::new();
     for (score, id) in scores.iter().zip(ids.iter()) {
         let Some(key) = cached.keys.get(*id as usize) else {
             continue;
         };
+        let rank = cached.ranks.get(*id as usize).copied().unwrap_or(0);
         if candidates.is_some_and(|set| !set.contains(key)) {
             continue;
         }
         if *score < min_score {
             continue;
         }
-        let entry = best.entry(key.as_str()).or_insert(f32::MIN);
-        if *score > *entry {
-            *entry = *score;
+        let entry = best.entry(key.as_str()).or_insert((f32::MIN, rank));
+        if *score > entry.0 {
+            *entry = (*score, rank);
         }
     }
     let mut hits: Vec<SearchHit> = best
         .into_iter()
-        .map(|(key, score)| SearchHit {
+        .map(|(key, (score, rank))| SearchHit {
             key: key.to_string(),
             score,
+            rank,
         })
         .collect();
     sort_hits(&mut hits);
@@ -234,14 +239,14 @@ fn exact_scan(
         })
         .unwrap_or_default();
 
-    let mut best: HashMap<String, f32> = HashMap::new();
+    let mut best: HashMap<String, (f32, i64)> = HashMap::new();
     for shard in list_shards(store, &collection.code, false)? {
         let mut offset = 0usize;
         loop {
             let rows = store.query(
                 &shard.path,
                 &format!(
-                    "SELECT key, dim, hex(vector) AS vector_hex FROM kv_record
+                    "SELECT key, dim, rank, hex(vector) AS vector_hex FROM kv_record
                      WHERE vector IS NOT NULL{candidate_sql}
                      ORDER BY id LIMIT {SCAN_PAGE} OFFSET {offset}"
                 ),
@@ -267,9 +272,10 @@ fn exact_scan(
                     continue;
                 }
                 let key = as_string(row, "key");
-                let entry = best.entry(key).or_insert(f32::MIN);
-                if score > *entry {
-                    *entry = score;
+                let rank = as_i64(row, "rank");
+                let entry = best.entry(key).or_insert((f32::MIN, rank));
+                if score > entry.0 {
+                    *entry = (score, rank);
                 }
             }
             offset += count;
@@ -281,15 +287,16 @@ fn exact_scan(
 
     let mut hits: Vec<SearchHit> = best
         .into_iter()
-        .map(|(key, score)| SearchHit { key, score })
+        .map(|(key, (score, rank))| SearchHit { key, score, rank })
         .collect();
     sort_hits(&mut hits);
     hits.truncate(top_k);
     Ok(hits)
 }
 
-fn load_all(store: &Store, collection: &Collection) -> Result<(Vec<String>, Vec<f32>)> {
+fn load_all(store: &Store, collection: &Collection) -> Result<(Vec<String>, Vec<i64>, Vec<f32>)> {
     let mut keys = Vec::new();
+    let mut ranks = Vec::new();
     let mut vectors = Vec::new();
     for shard in list_shards(store, &collection.code, false)? {
         let mut offset = 0usize;
@@ -297,7 +304,7 @@ fn load_all(store: &Store, collection: &Collection) -> Result<(Vec<String>, Vec<
             let rows = store.query(
                 &shard.path,
                 &format!(
-                    "SELECT key, dim, hex(vector) AS vector_hex FROM kv_record
+                    "SELECT key, dim, rank, hex(vector) AS vector_hex FROM kv_record
                      WHERE vector IS NOT NULL ORDER BY id LIMIT {SCAN_PAGE} OFFSET {offset}"
                 ),
             )?;
@@ -317,6 +324,7 @@ fn load_all(store: &Store, collection: &Collection) -> Result<(Vec<String>, Vec<
                     _ => continue,
                 };
                 keys.push(as_string(row, "key"));
+                ranks.push(as_i64(row, "rank"));
                 vectors.extend_from_slice(&vector);
             }
             offset += count;
@@ -325,7 +333,7 @@ fn load_all(store: &Store, collection: &Collection) -> Result<(Vec<String>, Vec<
             }
         }
     }
-    Ok((keys, vectors))
+    Ok((keys, ranks, vectors))
 }
 
 fn dot(left: &[f32], right: &[f32]) -> f32 {
@@ -337,9 +345,13 @@ fn dot(left: &[f32], right: &[f32]) -> f32 {
 
 fn sort_hits(hits: &mut [SearchHit]) {
     hits.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
+        rank_order(a.rank)
+            .cmp(&rank_order(b.rank))
+            .then_with(|| {
+                b.score
+                    .partial_cmp(&a.score)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+            })
             .then_with(|| a.key.cmp(&b.key))
     });
 }
