@@ -30,3 +30,6 @@ rustc-ice-*.txt
 
 # qwen3-embed GGUF is installed by dytes as a model package
 /models/
+
+# 本地数据集（不入库）
+datasets/
