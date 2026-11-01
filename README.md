@@ -23,7 +23,7 @@ Compiled as a Rust `cdylib` and exposed as `POST /kv_lib` + `FFI-Symbol: kv_*`.
 - Vector search: qwen3-embed (1024-dim, L2-normalized) + `turbovec` index cached per collection
   and invalidated by collection generation;
 - Built-in `prompt` collection seeded with base prompt / template / rules / limits;
-- 11 FFI symbols: collection, record, vector, stats and rebuild operations.
+- 4 FFI symbols: `kv_collection`, `kv_record`, `kv_embed`, `kv_search`.
 
 ## Building
 
@@ -44,19 +44,23 @@ collections with other dimensions fall back to the exact scan.
 
 ## FFI
 
-| Symbol | Purpose |
-| --- | --- |
-| `kv_collection_list` | List collections with row / shard / size stats |
-| `kv_collection_put` | Create or update a collection |
-| `kv_collection_delete` | Delete a collection (non-empty requires `hard=true`) |
-| `kv_get` | Read records by key |
-| `kv_put` | Upsert records, optionally embed `text` |
-| `kv_delete` | Delete records or clear only vectors |
-| `kv_list` | Paginated record scan |
-| `kv_embed` | Fill / refresh vectors from `text` |
-| `kv_search` | Similarity search by `query` text or `vector` |
-| `kv_stats` | Collection / shard / index statistics |
-| `kv_rebuild` | Rebuild `index`, `shards` or `text_hash` |
+| Symbol | `action` | Purpose |
+| --- | --- | --- |
+| `kv_collection` | `list`（默认）/ `put` / `delete` / `stats` | 集合列表、创建更新、删除与统计 |
+| `kv_record` | `list`（默认）/ `get` / `put` / `delete` | 记录读取、写入、删除与分页扫描 |
+| `kv_embed` | `embed`（默认）/ `rebuild` | 向量化；`rebuild` 用 `target` 指定 `index` / `shards` / `text_hash` |
+| `kv_search` | — | 按 `query` 文本或 `vector` 做相似度检索 |
+
+请求统一为 `{"action": "...", ...}`：
+
+```json
+{"action":"list","page":1,"page_size":20}
+{"action":"put","code":"plugin","name":"插件能力","dim":1024}
+{"action":"delete","code":"plugin","hard":true}
+{"action":"stats","collection":"plugin"}
+{"action":"get","collection":"plugin","keys":["k1"],"with_vector":false}
+{"action":"rebuild","collection":"plugin","target":"index","force":false}
+```
 
 Request / response shapes are documented in
 [`sysinfo/sys/kv_lib/ffi.md`](https://github.com/funxdata/dytes_sys_operations/blob/main/sysinfo/sys/kv_lib/ffi.md)

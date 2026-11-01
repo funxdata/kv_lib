@@ -1,5 +1,5 @@
 use crate::error::KvError;
-use crate::ffi::{handle, parse, parse_vector};
+use crate::ffi::{from_value, handle, parse, parse_vector};
 use crate::search::{prepare_query, search};
 use crate::store::{embed_records, get_collection, get_records, rebuild};
 use serde::Deserialize;
@@ -38,35 +38,55 @@ struct SearchReq {
     with_value: bool,
 }
 
-#[derive(Debug, Deserialize)]
-struct RebuildReq {
-    collection: String,
-    #[serde(default)]
-    action: Option<String>,
-    #[serde(default)]
-    force: bool,
-}
-
+/// 向量化与重建。
+///
+/// 入参 `action`：`embed`（默认）/ `rebuild`；
+/// `rebuild` 时用 `target` 指定 `index`（默认）/ `shards` / `text_hash`。
 #[unsafe(no_mangle)]
 pub extern "C" fn post_kv_embed(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     handle(json_in, json_out, |store, body| {
-        let req: EmbedReq = parse(body)?;
-        let result = embed_records(
-            store,
-            &req.collection,
-            req.keys.as_deref(),
-            req.limit,
-            req.offset,
-            req.force,
-        )?;
-        Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+        let request: Value = parse(body)?;
+        let action = request
+            .get("action")
+            .and_then(Value::as_str)
+            .unwrap_or("embed");
+
+        match action {
+            "embed" => {
+                let req: EmbedReq = from_value(request)?;
+                let result = embed_records(
+                    store,
+                    &req.collection,
+                    req.keys.as_deref(),
+                    req.limit,
+                    req.offset,
+                    req.force,
+                )?;
+                Ok(serde_json::to_value(result).unwrap_or(Value::Null))
+            }
+            "rebuild" => {
+                let collection = request
+                    .get("collection")
+                    .and_then(Value::as_str)
+                    .filter(|code| !code.trim().is_empty())
+                    .ok_or_else(|| KvError::invalid_collection("collection is required"))?;
+                let target = request
+                    .get("target")
+                    .and_then(Value::as_str)
+                    .unwrap_or("index");
+                let force = request.get("force").and_then(Value::as_bool).unwrap_or(false);
+                rebuild(store, collection, target, force)
+            }
+            other => Err(KvError::bad_request(format!("unknown action: {other}"))),
+        }
     })
 }
 
+/// 相似度检索：`query`（文本）或 `vector`（hex / 数组）二选一。
 #[unsafe(no_mangle)]
 pub extern "C" fn post_kv_search(json_in: *const c_char, json_out: *mut c_char) -> c_int {
     handle(json_in, json_out, |store, body| {
-        let req: SearchReq = parse(body)?;
+        let req: SearchReq = from_value(parse(body)?)?;
         let collection = get_collection(store, &req.collection)?;
         let query_text = req
             .query
@@ -140,15 +160,5 @@ pub extern "C" fn post_kv_search(json_in: *const c_char, json_out: *mut c_char) 
             "top_k": top_k,
             "list": list,
         }))
-    })
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn post_kv_rebuild(json_in: *const c_char, json_out: *mut c_char) -> c_int {
-    handle(json_in, json_out, |store, body| {
-        let req: RebuildReq = parse(body)?;
-        let action = req.action.unwrap_or_else(|| "index".to_string());
-        let data = rebuild(store, &req.collection, &action, req.force)?;
-        Ok(data)
     })
 }

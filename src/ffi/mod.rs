@@ -1,7 +1,6 @@
-mod collections;
-mod records;
-mod stats;
-mod vectors;
+mod collection;
+mod record;
+mod vector;
 
 use crate::db::FfiDb;
 use crate::embedding::default_embedder;
@@ -33,8 +32,13 @@ fn read_body(json_in: *const c_char) -> std::result::Result<String, i32> {
     }
 }
 
-fn parse<T: DeserializeOwned>(body: &str) -> Result<T> {
+fn parse(body: &str) -> Result<Value> {
     serde_json::from_str(body).map_err(|err| KvError::new(400102, format!("invalid json: {err}")))
+}
+
+/// 把请求 JSON 转成具体结构，失败统一返回 `400102`。
+pub(crate) fn from_value<T: DeserializeOwned>(value: Value) -> Result<T> {
+    serde_json::from_value(value).map_err(|err| KvError::new(400102, format!("invalid json: {err}")))
 }
 
 fn handle<F>(json_in: *const c_char, json_out: *mut c_char, f: F) -> c_int
