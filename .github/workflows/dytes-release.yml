@@ -1,0 +1,93 @@
+name: Release (dytes)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    name: Prepare
+    runs-on: ubuntu-latest
+    outputs:
+      platforms: ${{ steps.meta.outputs.platforms }}
+      build: ${{ steps.meta.outputs.build }}
+      version: ${{ steps.meta.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('./dytes.json').version")
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME#v}" != "${version}" ]; then
+            echo "tag ${GITHUB_REF_NAME} 与 dytes.json 版本 ${version} 不一致" >&2
+            exit 1
+          fi
+          platforms=$(node -e "const d=require('./dytes.json');const p=Object.keys(d['platform-exports']||{});process.stdout.write(JSON.stringify(p.length?p:['windows']))")
+          if [ -f CMakeLists.txt ]; then
+            build=cmake
+          elif [ -f Cargo.toml ]; then
+            build=cargo
+          else
+            build=deno
+          fi
+          echo "platforms=${platforms}" >> "$GITHUB_OUTPUT"
+          echo "build=${build}" >> "$GITHUB_OUTPUT"
+          echo "version=${version}" >> "$GITHUB_OUTPUT"
+
+  publish:
+    name: Publish ${{ matrix.platform }}
+    needs: prepare
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        platform: ${{ fromJson(needs.prepare.outputs.platforms) }}
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-latest' || matrix.platform == 'macos' && 'macos-latest' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Rust
+        if: needs.prepare.outputs.build == 'cargo'
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install CMake dependencies (Windows)
+        if: needs.prepare.outputs.build == 'cmake' && matrix.platform == 'windows'
+        shell: pwsh
+        run: choco install -y cmake ninja
+
+      - name: Install CMake dependencies (Unix)
+        if: needs.prepare.outputs.build == 'cmake' && matrix.platform != 'windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.platform }}" = "linux" ]; then
+            sudo apt-get update
+            sudo apt-get install -y cmake ninja-build pkg-config
+          else
+            brew install cmake ninja pkg-config
+          fi
+
+      - name: Build (cargo)
+        if: needs.prepare.outputs.build == 'cargo'
+        shell: bash
+        run: cargo build --release
+
+      - name: Build (cmake)
+        if: needs.prepare.outputs.build == 'cmake'
+        shell: bash
+        run: |
+          cmake -S . -B build -G Ninja -DBUILD_TESTS=OFF
+          cmake --build build --config Release
+
+      - name: Publish with dytes
+        uses: dytescn/dytes@v0.1.9
+        with:
+          command: publish
