@@ -1,7 +1,7 @@
 {
   "name": "kv_lib",
   "uuid": "d7921984-9020-4006-a356-a0c74578e4ac",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "generic key-value store with vector search",
   "keywords": [
     "kv",
@@ -15,7 +15,7 @@
   "type": "sys",
   "license": "MIT",
   "dependencies-sys": {
-    "database": "1.0.2"
+    "database": "1.0.3"
   },
   "dependencies-model": {
     "qwen3-embed": "1.0.0"

@@ -10,8 +10,10 @@ pub const OUT_BUF_SIZE: usize = 65536;
 
 #[cfg(windows)]
 pub const DEFAULT_DB_DLL: &str = "./libary/database.dll";
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
 pub const DEFAULT_DB_DLL: &str = "./libary/database.so";
+#[cfg(target_os = "macos")]
+pub const DEFAULT_DB_DLL: &str = "./libary/database.dylib";
 
 type DbCallFn = unsafe extern "C" fn(*const c_char, *mut c_char) -> c_int;
 
