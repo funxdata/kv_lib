@@ -169,10 +169,17 @@ fn record_from_row(row: &Value) -> Result<Record> {
     Ok(record)
 }
 
-fn select_columns() -> &'static str {
-    "key, value, value_type, text, text_hash, meta, rank, dim,
-     CASE WHEN vector IS NULL THEN NULL ELSE hex(vector) END AS vector_hex,
-     version, created_at, updated_at"
+/// 只查询需要的列；`with_vector=false` 时不读取 vector，避免大集合的 hex 文本
+/// 超过 database FFI 响应缓冲区。
+fn select_columns(with_vector: bool) -> &'static str {
+    if with_vector {
+        "key, value, value_type, text, text_hash, meta, rank, dim,
+         CASE WHEN vector IS NULL THEN NULL ELSE hex(vector) END AS vector_hex,
+         version, created_at, updated_at"
+    } else {
+        "key, value, value_type, text, text_hash, meta, rank, dim,
+         version, created_at, updated_at"
+    }
 }
 
 fn find_in_shards(
@@ -185,7 +192,7 @@ fn find_in_shards(
             &shard.path,
             &format!(
                 "SELECT {} FROM kv_record WHERE key = {} LIMIT 1",
-                select_columns(),
+                select_columns(true),
                 quote(key)
             ),
         )?;
@@ -222,7 +229,7 @@ pub fn get_records(
                 &shard.path,
                 &format!(
                     "SELECT {} FROM kv_record WHERE key IN ({})",
-                    select_columns(),
+                    select_columns(with_vector),
                     list
                 ),
             )?;
@@ -609,7 +616,7 @@ pub fn list_records(
                 "SELECT {} FROM kv_record {filter}
                  ORDER BY CASE WHEN rank <= 0 THEN 1 ELSE 0 END, rank, key
                  LIMIT {page_size} OFFSET {offset}",
-                select_columns()
+                select_columns(with_vector)
             ),
         )?;
         for row in &result {
@@ -633,4 +640,16 @@ pub fn list_records(
         page_size,
         total,
     })
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn list_columns_skip_vector_when_not_requested() {
+        assert!(!select_columns(false).contains("vector_hex"));
+        assert!(select_columns(true).contains("vector_hex"));
+    }
 }
