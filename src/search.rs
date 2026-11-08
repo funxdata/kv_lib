@@ -345,13 +345,10 @@ fn dot(left: &[f32], right: &[f32]) -> f32 {
 
 fn sort_hits(hits: &mut [SearchHit]) {
     hits.sort_by(|a, b| {
-        rank_order(a.rank)
-            .cmp(&rank_order(b.rank))
-            .then_with(|| {
-                b.score
-                    .partial_cmp(&a.score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            })
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| rank_order(a.rank).cmp(&rank_order(b.rank)))
             .then_with(|| a.key.cmp(&b.key))
     });
 }
@@ -391,4 +388,21 @@ pub fn search(
         min_score,
         candidates.as_ref(),
     )
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sorts_hits_by_score_descending() {
+        let mut hits = vec![
+            SearchHit { key: "low".into(), score: 0.48, rank: 1 },
+            SearchHit { key: "high".into(), score: 0.59, rank: 55 },
+            SearchHit { key: "mid".into(), score: 0.50, rank: 28 },
+        ];
+        sort_hits(&mut hits);
+        assert_eq!(hits.iter().map(|h| h.key.as_str()).collect::<Vec<_>>(), vec!["high", "mid", "low"]);
+    }
 }

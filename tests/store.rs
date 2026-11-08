@@ -302,6 +302,7 @@ fn rank_persists_and_orders_list_and_search() {
     let query = store.embedder().embed("导出 PDF").expect("embed query");
     let hits = search(&store, "ranked", query, 3, -1.0, None).expect("search ranked");
     let hit_keys: Vec<&str> = hits.iter().map(|hit| hit.key.as_str()).collect();
-    assert_eq!(hit_keys, vec!["b", "a", "c"]);
-    assert_eq!(hits[0].rank, 1);
+    // 搜索结果优先按 score 降序，rank 只用于同分排序。
+    assert_eq!(hit_keys, vec!["c", "b", "a"]);
+    assert!(hits.windows(2).all(|pair| pair[0].score >= pair[1].score));
 }

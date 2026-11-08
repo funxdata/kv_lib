@@ -1,6 +1,6 @@
 [package]
 name = "kv_lib"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2024"
 description = "Generic key-value store with vector search for Piksel"
 license = "MIT"
